@@ -150,6 +150,8 @@
     border-bottom-left-radius: 4px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
     border-left: 4px solid var(--pbt-dark);
+    padding: 12px 16px;
+    margin: 8px 0;
 }
 
 .message-time {
@@ -313,4 +315,181 @@
     .rag-chat-tooltip { 
         display: none; 
     }
+}
+
+/* ----- ESTILO DE TABLAS EN EL CHAT ----- */
+.rag-message.bot table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+    display: block; /* Permite scroll horizontal en móviles */
+    overflow-x: auto;
+}
+
+.rag-message.bot th {
+    background-color: var(--pbt-dark);
+    color: white;
+    text-align: left;
+    padding: 10px;
+    font-weight: 600;
+    border-bottom: 2px solid var(--pbt-red);
+}
+
+.rag-message.bot td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #334155;
+    min-width: 100px;
+}
+
+.rag-message.bot tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.rag-message.bot tr:hover {
+    background-color: #f1f5f9;
+}
+
+/* Mejora de enlaces (URLs de productos) */
+.rag-message.bot a {
+    color: var(--pbt-red);
+    text-decoration: none;
+    font-weight: 600;
+    border-bottom: 1px dashed var(--pbt-red);
+}
+
+.rag-message.bot a:hover {
+    color: var(--pbt-red-hover);
+    border-bottom-style: solid;
+}
+
+/* Ajuste para que las imágenes no se salgan del mensaje */
+.rag-message.bot img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin-top: 10px;
+}
+
+/* Contenedor para scroll horizontal si la tabla es grande */
+.table-container {
+    width: 100%;
+    overflow-x: auto;
+    margin: 10px 0;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+
+.rag-message.bot table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    font-size: 12px; /* Un poco más pequeña para que quepa mejor */
+}
+
+.rag-message.bot th {
+    background: #222; /* Tu color var(--pbt-dark) */
+    color: white;
+    padding: 8px;
+    text-align: left;
+}
+
+.rag-message.bot td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+    min-width: 80px; /* Evita que las palabras se amontonen */
+}
+
+.pbt-product-link {
+    display: inline-block;
+    background-color: var(--pbt-red);
+    color: white !important;
+    padding: 5px 12px;
+    border-radius: 15px;
+    text-decoration: none !important;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 5px 0;
+    border: none !important;
+    transition: background 0.2s;
+}
+
+.pbt-product-link:hover {
+    background-color: var(--pbt-red-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+/* Estilo para los links de productos */
+.product-link {
+    display: inline-block;
+    background: #e40611;
+    color: #ffffff !important;
+    padding: 8px 16px;
+    margin: 5px 0;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.product-link:hover {
+    background: #9c0324;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    color: #ffffff !important;
+}
+
+/* Separador */
+.separator {
+    margin: 20px 0;
+    border: none;
+    height: 2px;
+    background: linear-gradient(90deg, #7b1fa2, #e0e0e0, #7b1fa2);
+}
+
+/* Etiquetas de links */
+.link-label {
+    display: inline-block;
+    margin-top: 10px;
+}
+/* Reducir márgenes en listas */
+.rag-message.bot ol,
+.rag-message.bot ul {
+    margin: 0 0 5px 0;
+    padding-left: 25px;
+}
+
+.rag-message.bot li {
+    margin: 2px 0;
+}
+
+.rag-message.bot p {
+    margin: 5px 0;
+}
+
+.rag-message.bot hr.separator {
+    margin: 10px 0;
+    border: none;
+    height: 1px;
+    background: #e2e8f0;
+}
+
+/* Eliminar márgenes del primer párrafo después de la lista */
+.rag-message.bot ul + p,
+.rag-message.bot ol + p {
+    margin-top: 8px;
+}
+
+/* Estilo para la sección de contacto */
+.rag-message.bot p:has(📞) {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #e2e8f0;
 }

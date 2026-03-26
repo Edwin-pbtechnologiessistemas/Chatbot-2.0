@@ -1,8 +1,9 @@
 <?php
 /**
  * Plugin Name: Gemini RAG Product Chat
- * Description: Chat inteligente profesional para PBTechnologies usando Gemini 3.1 Flash Lite con RAG.
- * Version: 3.0
+ * Description: Chat inteligente profesional para PBTechnologies usando Gemini 2.5 Flash con RAG.
+ * Version: 1.0
+ * Author: Edwin PBT
  */
 
 if (!defined('ABSPATH')) exit;
@@ -10,7 +11,7 @@ if (!defined('ABSPATH')) exit;
 // Definir constantes
 define('GEMINI_RAG_PATH', plugin_dir_path(__FILE__));
 define('GEMINI_RAG_URL', plugin_dir_url(__FILE__));
-define('GEMINI_RAG_VERSION', '3.0');
+define('GEMINI_RAG_VERSION', '1.0');
 
 // Cargar clases necesarias
 require_once GEMINI_RAG_PATH . 'class-database.php';
@@ -22,29 +23,30 @@ class Gemini_RAG_Plugin {
     private $gemini;
     
     public function __construct() {
-        // Inicializar clases
-        $this->db = new ChatRAG_Database();
-        $this->gemini = new Gemini_RAG_Handler($this->db);
-        
-        // Hooks principales
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
-        add_action('wp_ajax_chat_rag_query', [$this, 'handle_chat_query']);
-        add_action('wp_ajax_nopriv_chat_rag_query', [$this, 'handle_chat_query']);
-        
-        // Cargar admin si estamos en el área administrativa
-        if (is_admin()) {
-            require_once GEMINI_RAG_PATH . 'admin/class-admin-menu.php';
-            new Gemini_RAG_Admin_Menu($this->db);
-        }
-        
-        // Iniciar sesión si no existe
-        if (!session_id()) {
-            session_start();
-        }
-        
-        // Debug: Verificar que el plugin se está cargando
-        error_log('Gemini RAG Plugin Cargado - Constructor ejecutado');
+    // Usamos el hook 'plugins_loaded' para asegurar que WooCommerce ya exista
+    add_action('plugins_loaded', [$this, 'init_plugin']);
+}
+
+public function init_plugin() {
+    $this->db = new ChatRAG_Database();
+    $this->gemini = new Gemini_RAG_Handler($this->db);
+    
+    // Hooks de Assets y AJAX
+    add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
+    add_action('wp_ajax_chat_rag_query', [$this, 'handle_chat_query']);
+    add_action('wp_ajax_nopriv_chat_rag_query', [$this, 'handle_chat_query']);
+    
+    if (is_admin()) {
+        require_once GEMINI_RAG_PATH . 'admin/class-admin-menu.php';
+        new Gemini_RAG_Admin_Menu($this->db);
     }
+
+    if (!session_id()) {
+        session_start();
+    }
+    
+    error_log('Gemini RAG Plugin Cargado correctamente tras plugins_loaded');
+}
     
     /**
      * Cargar assets del frontend

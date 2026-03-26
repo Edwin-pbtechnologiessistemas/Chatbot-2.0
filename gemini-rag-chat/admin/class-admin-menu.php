@@ -1,7 +1,6 @@
 <?php
 /**
  * Clase para el menú de administración del plugin Gemini RAG Chat
- * Adaptado del proyecto original
  */
 
 if (!defined('ABSPATH')) exit;
@@ -20,6 +19,9 @@ class Gemini_RAG_Admin_Menu {
         add_action('wp_ajax_chat_rag_import_products', [$this, 'handleImportProducts']);
         add_action('wp_ajax_chat_rag_delete_product', [$this, 'handleDeleteProduct']);
         add_action('wp_ajax_chat_rag_delete_company', [$this, 'handleDeleteCompany']);
+        
+        // 🔥 NUEVO: Handler para actualizar VIEW de WooCommerce
+        add_action('admin_post_refresh_woo_view', [$this, 'handleRefreshWooView']);
     }
     
     public function addMenus() {
@@ -68,56 +70,92 @@ class Gemini_RAG_Admin_Menu {
             'gemini-rag-company',
             [$this, 'renderCompany']
         );
+        
         add_submenu_page(
-    'gemini-rag',
-    'Configuración',
-    'Configuración',
-    'manage_options',
-    'gemini-rag-settings',
-    [$this, 'renderSettings']
-);
+            'gemini-rag',
+            'Configuración',
+            'Configuración',
+            'manage_options',
+            'gemini-rag-settings',
+            [$this, 'renderSettings']
+        );
     }
 
     public function renderSettings() {
-    // Guardar configuración
-    if (isset($_POST['submit'])) {
-        check_admin_referer('gemini_rag_settings');
-        $api_key = sanitize_text_field($_POST['gemini_api_key']);
-        update_option('gemini_api_key', $api_key);
-        echo '<div class="notice notice-success"><p>Configuración guardada</p></div>';
+        // Guardar configuración
+        if (isset($_POST['submit'])) {
+            check_admin_referer('gemini_rag_settings');
+            update_option('gemini_api_key_1', sanitize_text_field($_POST['gemini_api_key_1']));
+            update_option('gemini_api_key_2', sanitize_text_field($_POST['gemini_api_key_2']));
+            update_option('gemini_api_key_3', sanitize_text_field($_POST['gemini_api_key_3']));
+            update_option('gemini_api_key_4', sanitize_text_field($_POST['gemini_api_key_4']));
+            update_option('gemini_api_key_5', sanitize_text_field($_POST['gemini_api_key_5']));
+            echo '<div class="notice notice-success"><p>Configuración guardada</p></div>';
+        }
+        
+        $api_key_1 = get_option('gemini_api_key_1', '');
+        $api_key_2 = get_option('gemini_api_key_2', '');
+        $api_key_3 = get_option('gemini_api_key_3', '');
+        $api_key_4 = get_option('gemini_api_key_4', '');
+        $api_key_5 = get_option('gemini_api_key_5', '');
+        ?>
+        <div class="wrap">
+            <h1>Configuración de Gemini RAG Chat</h1>
+            
+            <form method="post">
+                <?php wp_nonce_field('gemini_rag_settings'); ?>
+                <table class="form-table">
+                    <tr>
+                        <th>API Key 1</th>
+                        <td>
+                            <input type="password" name="gemini_api_key_1"
+                                value="<?php echo esc_attr($api_key_1); ?>"
+                                class="regular-text">
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>API Key 2</th>
+                        <td>
+                            <input type="password" name="gemini_api_key_2"
+                                value="<?php echo esc_attr($api_key_2); ?>"
+                                class="regular-text">
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>API Key 3</th>
+                        <td>
+                            <input type="password" name="gemini_api_key_3"
+                                value="<?php echo esc_attr($api_key_3); ?>"
+                                class="regular-text">
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>API Key 4</th>
+                        <td>
+                            <input type="password" name="gemini_api_key_4"
+                                value="<?php echo esc_attr($api_key_4); ?>"
+                                class="regular-text">
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>API Key 5</th>
+                        <td>
+                            <input type="password" name="gemini_api_key_5"
+                                value="<?php echo esc_attr($api_key_5); ?>"
+                                class="regular-text">
+                        </td>
+                    </tr>
+                </table>
+                <?php submit_button('Guardar configuración', 'primary', 'submit'); ?>
+            </form>
+            
+            <div class="notice notice-info">
+                <p><strong>📌 Importante:</strong> El modelo usado es <code>gemini-2.5-flash</code></p>
+            </div>
+        </div>
+        <?php
     }
     
-    $api_key = get_option('gemini_api_key', '');
-    ?>
-    <div class="wrap">
-        <h1>Configuración de Gemini RAG Chat</h1>
-        
-        <form method="post">
-            <?php wp_nonce_field('gemini_rag_settings'); ?>
-            <table class="form-table">
-                <tr>
-                    <th>API Key de Gemini</th>
-                    <td>
-                        <input type="password" 
-                               name="gemini_api_key" 
-                               value="<?php echo esc_attr($api_key); ?>" 
-                               class="regular-text"
-                               placeholder="Ingresa tu API key de Google AI Studio">
-                        <p class="description">
-                            Obtén tu API key en <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>
-                        </p>
-                    </td>
-                </tr>
-            </table>
-            <?php submit_button('Guardar configuración', 'primary', 'submit'); ?>
-        </form>
-        
-        <div class="notice notice-info">
-            <p><strong>📌 Importante:</strong> El modelo usado es <code>gemini-3.1-flash-lite-preview</code></p>
-        </div>
-    </div>
-    <?php
-}
     public function adminScripts($hook) {
         if (strpos($hook, 'gemini-rag') === false) {
             return;
@@ -132,9 +170,67 @@ class Gemini_RAG_Admin_Menu {
         ]);
     }
     
+    /**
+     * 🔥 NUEVO: Handler para actualizar VIEW de WooCommerce
+     */
+    public function handleRefreshWooView() {
+        // Verificar permisos
+        if (!current_user_can('manage_options')) {
+            wp_die('No tienes permisos para realizar esta acción.');
+        }
+        
+        // Verificar nonce
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'refresh_woo_view')) {
+            wp_die('Nonce inválido.');
+        }
+        
+        // Verificar que la clase existe
+        if (class_exists('ChatRAG_WooCommerce')) {
+            try {
+                $woo = new ChatRAG_WooCommerce();
+                $woo->refreshView();
+                
+                // Guardar timestamp de última actualización
+                update_option('woo_view_last_updated', current_time('mysql'));
+                
+                // Redirigir con mensaje de éxito
+                wp_redirect(add_query_arg(
+                    'woo_refreshed', 
+                    '1', 
+                    admin_url('admin.php?page=gemini-rag')
+                ));
+                exit;
+            } catch (Exception $e) {
+                wp_die('Error al actualizar: ' . $e->getMessage());
+            }
+        } else {
+            wp_die('Error: No se pudo cargar la clase ChatRAG_WooCommerce. ¿WooCommerce está activo?');
+        }
+    }
+    
     public function renderDashboard() {
+        // 🔥 Procesar mensaje de éxito después de actualizar
+        $woo_refreshed = isset($_GET['woo_refreshed']) && $_GET['woo_refreshed'] == '1';
+        if ($woo_refreshed) {
+            echo '<div class="notice notice-success is-dismissible"><p>✅ VIEW de WooCommerce actualizada correctamente. Los productos y especificaciones están sincronizados.</p></div>';
+        }
+        
         $product_count = $this->database->getProductCount();
         $company_count = $this->database->getCompanyCount();
+        
+        // 🔥 Obtener contador de productos WooCommerce
+        $woo_product_count = 0;
+        $woo_last_updated = get_option('woo_view_last_updated', 'Nunca');
+        
+        if (class_exists('ChatRAG_WooCommerce')) {
+            try {
+                $woo = new ChatRAG_WooCommerce();
+                $woo_product_count = $woo->getProductCount();
+            } catch (Exception $e) {
+                error_log('Error al obtener productos WooCommerce: ' . $e->getMessage());
+            }
+        }
+        
         include plugin_dir_path(__FILE__) . 'pages/dashboard.php';
     }
     
@@ -211,7 +307,7 @@ class Gemini_RAG_Admin_Menu {
         $headers = array_map('trim', $headers);
         $headers = array_map('strtolower', $headers);
         
-        // Columnas requeridas (sin availability ni keywords)
+        // Columnas requeridas
         $required = ['product_name', 'category', 'subcategory', 'brand', 'short_description', 'long_description', 'specifications', 'price', 'product_url'];
         $missing = array_diff($required, $headers);
         

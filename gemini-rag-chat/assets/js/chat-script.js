@@ -21,7 +21,7 @@ jQuery(document).ready(function($) {
             this.bindEvents();
             this.loadHistory();
         }
-
+        
         addTooltip() {
             if (!$('.rag-chat-tooltip').length) {
                 this.tooltip = $('<div class="rag-chat-tooltip">¡Hola! ¿Necesitas ayuda? 👋</div>');
@@ -32,7 +32,7 @@ jQuery(document).ready(function($) {
                 });
             }
         }
-
+        
         bindEvents() {
             this.button.on('click', (e) => {
                 e.stopPropagation();
@@ -77,6 +77,11 @@ jQuery(document).ready(function($) {
             const message = this.input.val().trim();
             if (!message || this.isTyping) return;
 
+            // 🔥 LOG: Pregunta enviada
+            console.log('===========================================');
+            console.log('📤 PREGUNTA ENVIADA:', message);
+            console.log('===========================================');
+
             this.addMessage(message, 'user');
             this.input.val('');
             this.showTyping(true);
@@ -92,18 +97,15 @@ jQuery(document).ready(function($) {
                 success: (response) => {
                     this.showTyping(false);
 
-                    if (response.success) {
-                        // --- LOG DE DEPURACIÓN EN CONSOLA ---
-                        if (response.data.debug_context) {
-                            console.group("🔍 DEBUG: Contexto enviado a Gemini");
-                            console.log(response.data.debug_context);
-                            console.groupEnd();
-                        }
+                    console.log('📥 RESPUESTA RECIBIDA (RAW):', response);
 
-                        const text = (typeof response.data === 'object' && response.data.answer)
-                            ? response.data.answer
-                            : response.data;
-                        this.addMessage(text, 'bot');
+                    if (response.success) {
+                        const answer = response.data.answer;
+                        const context = response.data.debug_context;  
+                        
+                        // Mostrar mensaje
+                        this.addMessage(answer, 'bot');
+                        
                     } else {
                         const errMsg = (typeof response.data === 'object' && response.data.message)
                             ? response.data.message
@@ -113,7 +115,8 @@ jQuery(document).ready(function($) {
                 },
                 error: (xhr, status, error) => {
                     this.showTyping(false);
-                    console.error('Error Crítico:', xhr.responseText);
+                    console.error('❌ AJAX ERROR:', status, error);
+                    console.error('Response:', xhr.responseText);
                     this.addMessage('⚠️ Error de conexión con el servidor.', 'bot error');
                 }
             });
@@ -129,36 +132,130 @@ jQuery(document).ready(function($) {
         }
 
         formatMessage(text) {
-            if (!text) return '';
-            let formatted = String(text);
-
-            // 1. Enlaces detectados
-            formatted = formatted.replace(/(https?:\/\/[^\s<>"]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
-
-            // 2. Markdown básico (Negritas e itálicas)
-            formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
-            formatted = formatted.replace(/### (.*?)\n/g, '<h3>$1</h3>');
-
-            // 3. Listas y Párrafos
-            const lines = formatted.split('\n');
-            let result = '';
-            let inList = false;
-
-            lines.forEach(line => {
-                const trimmed = line.trim();
-                if (trimmed.startsWith('•') || trimmed.startsWith('-') || trimmed.startsWith('*')) {
-                    if (!inList) { result += '<ul>'; inList = true; }
-                    result += `<li>${trimmed.substring(1).trim()}</li>`;
-                } else {
-                    if (inList) { result += '</ul>'; inList = false; }
-                    if (trimmed) result += `<p>${trimmed}</p>`;
-                }
-            });
-            if (inList) result += '</ul>';
-
-            return result;
+    if (!text) return '';
+    let formatted = String(text);
+    
+    // 🔥 1. LIMPIEZA EXTREMA DE ESPACIOS
+    // Eliminar líneas vacías al inicio
+    formatted = formatted.replace(/^\s*\n+/, '');
+    // Reducir múltiples saltos de línea a máximo 1
+    formatted = formatted.replace(/\n\s*\n/g, '\n');
+    // Eliminar espacios al inicio de cada línea
+    formatted = formatted.replace(/^[ \t]+/gm, '');
+    // Eliminar líneas vacías al final
+    formatted = formatted.replace(/\n\s*$/, '');
+    // Eliminar espacios entre número y punto (1.  Producto -> 1. Producto)
+    formatted = formatted.replace(/(\d+)\.\s+/g, '$1. ');
+    // Eliminar espacios después de viñetas
+    formatted = formatted.replace(/([•\-*])\s+/g, '$1 ');
+    
+    // 2. Convertir URLs a links clickables
+    formatted = formatted.replace(/(https?:\/\/[^\s<>"]+)/g, function(url) {
+        let cleanUrl = url.replace(/[)]+$/, '');
+        return `<a href="${cleanUrl}" target="_blank" class="pbt-product-link">🔗 Ver producto</a>`;
+    });
+    
+    // 3. Markdown básico
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
+    
+    // 4. Procesar líneas para crear HTML limpio
+    const lines = formatted.split('\n');
+    let result = '';
+    let inOrderedList = false;
+    let inUnorderedList = false;
+    let lastWasEmpty = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        let trimmed = line.trim();
+        
+        // Saltar líneas vacías (pero controlar para no crear espacios extra)
+        if (trimmed === '') {
+            lastWasEmpty = true;
+            continue;
         }
+        
+        // Detectar lista numerada (1., 2., etc.)
+        if (trimmed.match(/^\d+\.\s/)) {
+            if (inUnorderedList) {
+                result += '</ul>';
+                inUnorderedList = false;
+            }
+            if (!inOrderedList) {
+                if (lastWasEmpty && result.endsWith('</p>')) {
+                    // No agregar espacio extra
+                }
+                result += '<ol>';
+                inOrderedList = true;
+            }
+            const content = trimmed.replace(/^\d+\.\s+/, '');
+            result += `<li>${content}</li>`;
+            lastWasEmpty = false;
+        }
+        // Detectar viñetas (•, -, *)
+        else if (trimmed.match(/^[•\-*]\s/)) {
+            if (inOrderedList) {
+                result += '</ol>';
+                inOrderedList = false;
+            }
+            if (!inUnorderedList) {
+                if (lastWasEmpty && result.endsWith('</p>')) {
+                    // No agregar espacio extra
+                }
+                result += '<ul>';
+                inUnorderedList = true;
+            }
+            const content = trimmed.replace(/^[•\-*]\s+/, '');
+            result += `<li>${content}</li>`;
+            lastWasEmpty = false;
+        }
+        // Detectar el separador ---
+        else if (trimmed === '---') {
+            if (inOrderedList) {
+                result += '</ol>';
+                inOrderedList = false;
+            }
+            if (inUnorderedList) {
+                result += '</ul>';
+                inUnorderedList = false;
+            }
+            result += '<hr class="separator">';
+            lastWasEmpty = false;
+        }
+        // Línea normal
+        else {
+            if (inOrderedList) {
+                result += '</ol>';
+                inOrderedList = false;
+            }
+            if (inUnorderedList) {
+                result += '</ul>';
+                inUnorderedList = false;
+            }
+            result += `<p>${trimmed}</p>`;
+            lastWasEmpty = false;
+        }
+    }
+    
+    // Cerrar listas si quedaron abiertas
+    if (inOrderedList) result += '</ol>';
+    if (inUnorderedList) result += '</ul>';
+    
+    // 5. Limpiar elementos vacíos
+    result = result.replace(/<p><\/p>/g, '');
+    result = result.replace(/<ul><\/ul>/g, '');
+    result = result.replace(/<ol><\/ol>/g, '');
+    
+    // 6. Eliminar espacios entre etiquetas consecutivas
+    result = result.replace(/<\/p>\s*<p>/g, '</p><p>');
+    result = result.replace(/<\/ul>\s*<p>/g, '</ul><p>');
+    result = result.replace(/<\/ol>\s*<p>/g, '</ol><p>');
+    result = result.replace(/<p>\s*<ul>/g, '<p><ul>');
+    result = result.replace(/<p>\s*<ol>/g, '<p><ol>');
+    
+    return result;
+}
 
         showTyping(show) {
             if (show && !this.isTyping) {

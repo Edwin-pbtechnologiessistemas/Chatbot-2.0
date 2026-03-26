@@ -1,7 +1,6 @@
 <?php
 /**
  * Clase para manejar la lógica de Gemini
- * Separada del archivo principal para mejor organización
  */
 
 if (!defined('ABSPATH')) exit;
@@ -9,42 +8,158 @@ if (!defined('ABSPATH')) exit;
 class Gemini_RAG_Handler {
     
     private $db;
-    public $api_key;
+    private $woo;
+    private $api_keys = [];
+private $current_key_index = 0;
     
     public function __construct($db) {
         $this->db = $db;
-        $this->api_key = get_option('gemini_api_key', '');
+        $this->api_keys = array_filter([
+    get_option('gemini_api_key_1', ''),
+    get_option('gemini_api_key_2', ''),
+    get_option('gemini_api_key_3', ''),
+    get_option('gemini_api_key_4', ''),
+    get_option('gemini_api_key_5', '')
+]);
         
-        if (empty($this->api_key)) {
-            error_log('⚠️ API Key de Gemini no configurada');
+        // Inicializar WooCommerce handler si existe el archivo
+        $woo_file = plugin_dir_path(__FILE__) . 'class-woocommerce.php';
+        if (file_exists($woo_file)) {
+            require_once $woo_file;
+            $this->woo = new ChatRAG_WooCommerce();
         } else {
-            error_log('✅ API Key de Gemini configurada');
+            $this->woo = null;
+            error_log('⚠️ Archivo class-woocommerce.php no encontrado');
+        }
+        
+        if ($this->woo && $this->woo->isWooActive()) {
+            error_log('✅ Usando WooCommerce como fuente de productos');
+        } else {
+            error_log('⚠️ WooCommerce no activo, usando tabla personalizada');
         }
     }
+    private function getNextApiKey() {
+
+    $keys = $this->api_keys;
+
+    if (empty($keys)) return null;
+
+    // Obtener índice actual guardado
+    $index = get_option('gemini_key_index', 0);
+
+    // Seleccionar key
+    $api_key = $keys[$index];
+
+    // Calcular siguiente índice
+    $next_index = ($index + 1) % count($keys);
+
+    // Guardar para la siguiente request
+    update_option('gemini_key_index', $next_index);
+    error_log("🔑 Usando API KEY: " . substr($api_key, 0, 10));
+
+    return $api_key;
+}
     
     public function processQuery($question) {
-        global $wpdb;
-        $table_products = $this->db->getTables()['products'];
-        $table_company = $this->db->getTables()['company'];
+    global $wpdb;
+    $table_company = $this->db->getTables()['company'];
+    
+    // 1. OBTENER INFO DE EMPRESA
+    $company_info = $wpdb->get_results(
+        "SELECT * FROM $table_company 
+         WHERE info_type IN ('empresa', 'ubicacion', 'contacto') 
+         ORDER BY order_index ASC LIMIT 5"
+    );
 
-        $company_info = $wpdb->get_results(
-            "SELECT * FROM $table_company 
-             WHERE info_type IN ('empresa', 'ubicacion', 'contacto') 
-             ORDER BY order_index ASC LIMIT 5"
-        );
+    // 2. OBTENER PRODUCTOS (CORREGIDO)
+    $products = [];
+    $context_products = "";
 
+    if ($this->woo && $this->woo->isWooActive()) {
+        // Buscamos 50 productos para tener buen margen de coincidencia
+        $products = $this->woo->searchProducts($question, 50);
+        $context_products = $this->woo->formatForGemini($products);
+    } else {
         $products = $this->searchProductsOptimized($question);
-        $context = $this->buildContext($company_info, $products);
-        $response = $this->callGemini($question, $context);
+        $context_products = $this->buildContextFromWoo($company_info, $products);
+    }
+
+    // 3. CONSTRUIR CONTEXTO CORPORATIVO
+    $context_company = "--- INFORMACIÓN EMPRESA ---\n";
+    foreach ($company_info as $info) {
+        $context_company .= "{$info->title}: {$info->content} | {$info->subcontent}\n";
+    }
+
+    // Unimos TODO el contexto (Empresa + Productos)
+    $full_context = $context_company . "\n" . $context_products;
+
+    // 4. LLAMADA A GEMINI
+    $response = $this->callGemini($question, $full_context);
+    
+    return [
+        'response' => $this->formatResponse($response),
+        'context' => $full_context, // Para que el log de debug ahora sí muestre los productos
+        'products_count' => count($products)
+    ];
+}
+    
+    /**
+     * Construir contexto con agrupación por categoría
+     */
+    private function buildContextFromWoo($company_info, $products) {
+        $context = "--- INFORMACIÓN CORPORATIVA PBTechnologies ---\n";
+        foreach ($company_info as $info) {
+            $context .= "{$info->title}: {$info->content}\n: {$info->subcontent}\n";
+        }
         
-        return [
-            'response' => $response,
-            'context' => $context,
-            'products_count' => count($products)
-        ];
+        $context .= "\n--- CATÁLOGO DETALLADO DE PRODUCTOS ---\n";
+        
+        if (!empty($products)) {
+            // Agrupar productos por categoría para mejor organización
+            $grouped = [];
+            foreach ($products as $p) {
+                $cat = !empty($p->categories) ? $p->categories : 'Otros';
+                $grouped[$cat][] = $p;
+            }
+            
+            foreach ($grouped as $category => $items) {
+                $context .= "\n📁 CATEGORÍA: {$category}\n";
+                $context .= str_repeat('-', 50) . "\n";
+                
+                foreach ($items as $p) {
+                    $context .= "===========================================\n";
+                    $context .= "🔹 PRODUCTO: {$p->product_name}\n";
+                    $context .= "🏷️ MARCA: " . ($p->brand ?: 'No especificada') . "\n";
+                    
+                    if (!empty($p->short_description)) {
+                        $short_desc = $this->sanitizeText($p->short_description);
+                        $context .= "\n📝 DESCRIPCIÓN CORTA:\n" . substr($short_desc, 0, 800) . "\n";
+                    }
+                    
+                    if (!empty($p->long_description)) {
+                        $long_desc = $this->sanitizeText($p->long_description);
+                        $context .= "\n📖 DESCRIPCIÓN:\n" . substr($long_desc, 0, 1000) . "\n";
+                    }
+                    
+                    if (!empty($p->specifications)) {
+                        $specs = $this->sanitizeText($p->specifications);
+                        $context .= "\n⚙️ ESPECIFICACIONES TÉCNICAS:\n" . substr($specs, 0, 1000) . "\n";
+                    }
+                    $context .= "✅ ESTADO: {$p->availability}\n";
+                    $context .= "🔗 URL: {$p->product_url}\n";
+                    $context .= "===========================================\n\n";
+                }
+            }
+        } else {
+            $context .= "No se encontraron productos coincidentes en nuestro catálogo.\n";
+        }
+        
+        return $context;
     }
     
-    // ✅ ESTA ES LA FUNCIÓN QUE FUNCIONA - COPIADA DIRECTAMENTE DE TU CÓDIGO ORIGINAL
+    /**
+     * Búsqueda en tabla personalizada (fallback)
+     */
     private function searchProductsOptimized($query) {
         global $wpdb;
         $table_products = $this->db->getTables()['products'];
@@ -52,7 +167,6 @@ class Gemini_RAG_Handler {
         $clean_query = mb_strtolower($query, 'UTF-8');
         $words = explode(' ', $clean_query);
         
-        // Solo palabras con significado
         $words = array_filter($words, function($w) { 
             return strlen($w) > 3 && !in_array($w, ['para', 'tiene', 'tienen', 'ustedes', 'busco', 'hola']); 
         });
@@ -80,103 +194,206 @@ class Gemini_RAG_Handler {
 
         return $wpdb->get_results("SELECT * FROM $table_products ORDER BY id DESC LIMIT 5");
     }
-    
-    // ✅ BUILD CONTEXT MEJORADO CON DESCRIPCIÓN DETALLADA
-    private function buildContext($company_info, $products) {
-        $context = "--- INFORMACIÓN CORPORATIVA PBTechnologies ---\n";
-        foreach ($company_info as $info) {
-            $context .= "{$info->title}: {$info->content}\n: {$info->subcontent}\n";
-        }
-        
-        $context .= "\n--- CATÁLOGO DETALLADO DE PRODUCTOS ---\n";
-        if (!empty($products)) {
-            foreach ($products as $p) {
-                $context .= "===========================================\n";
-                $context .= "PRODUCTO: {$p->product_name}\n";
-                $context .= "MARCA: {$p->brand} | CATEGORÍA: {$p->category} | SUBCATEGORÍA: {$p->subcategory}\n";
-                
-                // DESCRIPCIÓN CORTA
-                if (!empty($p->short_description)) {
-                    $context .= "\n📝 DESCRIPCIÓN CORTA:\n{$p->short_description}\n";
-                }
-                
-                // DESCRIPCIÓN LARGA - CRUCIAL PARA INFORMACIÓN DETALLADA
-                if (!empty($p->long_description)) {
-                    $context .= "\n📖 DESCRIPCIÓN DETALLADA:\n{$p->long_description}\n";
-                }
-                
-                // ESPECIFICACIONES TÉCNICAS
-                if (!empty($p->specifications)) {
-                    $context .= "\n⚙️ ESPECIFICACIONES TÉCNICAS:\n{$p->specifications}\n";
-                }
-                
-                $context .= "\n✅ ESTADO: " . ($p->availability ? $p->availability : 'Disponible') . "\n";
-                $context .= "🔗 URL: {$p->product_url}\n";
-                $context .= "===========================================\n\n";
-            }
-        } else {
-            $context .= "No se encontraron productos coincidentes en nuestra base de datos oficial.\n";
-        }
-        
-        return $context;
+    private function updateKeyStats($api_key, $status) {
+
+    $stats = get_option('gemini_api_key_stats', []);
+
+    if (!isset($stats[$api_key])) {
+        $stats[$api_key] = [
+            'count' => 0,
+            'status' => 'sin_uso',
+            'last_used' => ''
+        ];
     }
+
+    $stats[$api_key]['count'] += 1;
+    $stats[$api_key]['status'] = $status;
+    $stats[$api_key]['last_used'] = current_time('mysql');
+
+    update_option('gemini_api_key_stats', $stats);
+}
     
     private function callGemini($question, $context) {
-        if (empty($this->api_key)) {
-            return "⚠️ Error de configuración: La API key de Gemini no está configurada.";
-        }
-        
-        $model = "gemini-3.1-flash-lite-preview";
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . $this->api_key;
-        
-        $prompt = $this->buildPrompt($question, $context);
-        
-        $body = [
-            "contents" => [["parts" => [["text" => $prompt]]]],
-            "generationConfig" => [
-                "temperature" => 0.1,
-                "maxOutputTokens" => 800
+    if (empty($this->api_keys)) {
+        return "⚠️ No hay API keys configuradas.";
+    }
+
+    $model = "gemini-2.5-flash";
+    $prompt = $this->buildPrompt($question, $context);
+
+    // 🔥 LOG DE CONTROL: Verifica que el prompt no salga vacío aquí
+    error_log('Longitud del prompt antes de enviar: ' . strlen($prompt));
+
+    $body = [
+        "contents" => [
+            [
+                "parts" => [
+                    ["text" => $prompt]
+                ]
             ]
-        ];
-        
-        $request = wp_remote_post($url, [
+        ],
+        "generationConfig" => [
+            "temperature" => 0.1,
+            "maxOutputTokens" => 2048,
+            "topP" => 0.95,
+            "topK" => 40 // Bajamos un poco para asegurar estabilidad
+        ]
+    ];
+
+    $body = $this->sanitizeArrayForJson($body);
+    $json_body = json_encode($body, JSON_UNESCAPED_UNICODE);
+    
+    if ($json_body === false) {
+        return "⚠️ Error interno: No se pudo procesar la consulta correctamente.";
+    }
+
+    $max_retries = count($this->api_keys);
+
+    for ($i = 0; $i < $max_retries; $i++) {
+        $api_key = $this->getNextApiKey();
+        if (!$api_key) continue;
+
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$api_key}";
+
+        $args = [
             'headers' => ['Content-Type' => 'application/json'],
-            'body'    => json_encode($body),
-            'timeout' => 30
-        ]);
-        
+            'body'    => $json_body,
+            'timeout' => 120,
+            'method'  => 'POST'
+        ];
+
+        error_log("📤 Enviando a Gemini con API key: " . substr($api_key, 0, 10));
+
+        $request = wp_remote_post($url, $args);
+
         if (is_wp_error($request)) {
-            return "Error de red. Por favor, intenta de nuevo.";
+            error_log("❌ WP Error: " . $request->get_error_message());
+            $this->updateKeyStats($api_key, 'error');
+            continue;
         }
+
+        $code = wp_remote_retrieve_response_code($request);
+        $body_response = wp_remote_retrieve_body($request);
         
-        $data = json_decode(wp_remote_retrieve_body($request), true);
-        $response = $data['candidates'][0]['content']['parts'][0]['text'] ?? "Lo siento, no puedo responder ahora.";
+        error_log("📥 Respuesta código: " . $code);
         
-        return preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', '$2', $response);
+        error_log("📝 RESPUESTA COMPLETA DE GEMINI:");
+        error_log("===========================================");
+        error_log($body_response);
+        error_log("===========================================");
+
+        if ($code == 429 || $code == 403) {
+            error_log("⚠️ Rate limit excedida");
+            $this->updateKeyStats($api_key, 'rate_limit');
+            continue;
+        }
+
+        if ($code !== 200) {
+            error_log("❌ Error código HTTP: " . $code);
+            error_log("❌ Respuesta: " . substr($body_response, 0, 500));
+            $this->updateKeyStats($api_key, 'error');
+            continue;
+        }
+
+        $data = json_decode($body_response, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("❌ Error decodificando JSON: " . json_last_error_msg());
+            continue;
+        }
+
+        $response_text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+
+        if ($response_text) {
+            $this->updateKeyStats($api_key, 'activa');
+            
+            // 🔥 MOSTRAR EN LOG DE PHP EL TEXTO COMPLETO
+            error_log("📝 TEXTO COMPLETO DE RESPUESTA:");
+            error_log("===========================================");
+            error_log($response_text);
+            error_log("===========================================");
+            error_log("📏 Longitud: " . strlen($response_text) . " caracteres");
+            
+            return trim($response_text);
+        }
+    }
+
+    return "⚠️ Todas las API keys alcanzaron su límite. Intenta más tarde.";
+}
+
+/**
+ * 🔥 NUEVA FUNCIÓN: Sanitizar array recursivamente para JSON
+ */
+private function sanitizeArrayForJson($array) {
+    array_walk_recursive($array, function(&$item) {
+        if (is_string($item)) {
+            // Eliminar caracteres no UTF-8
+            $item = mb_convert_encoding($item, 'UTF-8', 'UTF-8');
+            // Eliminar caracteres de control excepto saltos de línea y tabs
+            $item = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $item);
+            // Reemplazar caracteres inválidos
+            $item = preg_replace('/[^\P{C}\n\r\t]/u', '?', $item);
+        }
+    });
+    return $array;
+}
+    
+    private function sanitizeText($text) {
+    if (empty($text)) return '';
+    
+    // Convertir a UTF-8 de manera más robusta
+    if (!mb_check_encoding($text, 'UTF-8')) {
+        $text = mb_convert_encoding($text, 'UTF-8', 'auto');
     }
     
-    private function buildPrompt($question, $context) {
-        return "INSTRUCCIÓN DEL SISTEMA:
-Eres el Ingeniero de Soporte Técnico de PBTechnologies S.R.L. (Bolivia).
-
-REGLAS PARA COMPARACIONES:
-1. Si el usuario pide comparar productos (ej. '¿Cuál es la diferencia entre el Ti5 y el Ti7?'), genera una TABLA comparativa clara.
-2. Compara puntos clave basándote en las 'ESPECIFICACIONES TÉCNICAS'.
-3. Indica claramente cuál es el modelo superior o para qué caso de uso se recomienda cada uno.
-4. Al final de la comparación, proporciona las URLs de ambos productos.
-
-REGLAS GENERALES:
-- Usa siempre los datos del CONTEXTO DE INVENTARIO.
-- Si un dato no está en las especificaciones, di 'Consultar con un asesor'.
-- Tono profesional y experto.
-
-CONTEXTO DE INVENTARIO:
-$context
-
-PREGUNTA DEL CLIENTE:
-$question";
-    }
+    // 🔥 FORZAR A UTF-8 VÁLIDO
+    $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
     
+    // Eliminar caracteres de control no deseados (manteniendo \n, \r, \t)
+    $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text);
+    
+    // Reemplazar caracteres problemáticos que no son imprimibles
+    $text = preg_replace('/[^\P{C}\n\r\t]/u', '?', $text);
+    
+    // Limitar longitud para evitar problemas
+    $text = substr($text, 0, 20000);
+    
+    return trim($text);
+}
+    
+private function buildPrompt($question, $context) {
+    return "Estás actuando como Ingeniero de Soporte de PBTechnologies (Bolivia).
+    
+    ### OBJETO DEL SISTEMA ###
+    Tu tarea es escanear el CATÁLOGO DETALLADO y encontrar el equipo cuya 'DESCRIPCIÓN' o 'USO' coincida estrictamente con la necesidad del cliente.
+    
+    ### REGLAS DE ANÁLISIS DINÁMICO (ESTRICTAS) ###
+    1. **NO INVENTAR:** Si el producto no está en el catálogo, di: 'Actualmente no contamos con ese equipo específico en nuestro catálogo digital'. No menciones marcas externas como Bosch o Makita si no están en el texto.
+    2. **ANÁLISIS DE ACCIÓN:** Extrae el 'VERBO' o 'NECESIDAD' (fuga, consumo, temperatura, corte) y busca el equipo que lo resuelva.
+    3. **PRIORIDAD:** Si un equipo menciona la palabra clave (ej: 'fuga') en su descripción técnica, elígelo aunque esté al final de la lista.
+    4. **PROHIBIDO TABLAS:** No uses tablas bajo ninguna circunstancia (rompen el chat). Usa solo LISTAS CON VIÑETAS.
+    5. **CERO PRECIOS:** No menciones montos. Di siempre 'Precio a consultar'.
+    6. invita a consultar por WhatsApp, numero de contacto y direccion de la oficina
+
+    ### FORMATO DE RESPUESTA REQUERIDO ###
+    Si encuentras coincidencia, responde así:
+    'Sí, en PBTechnologies contamos con [Producto] ideal para [Aplicación]:
+    * **[Nombre Producto]**: [Breve descripción de por qué sirve]
+    * **Característica clave**: [Dato técnico]
+    * 🔗 **Ver detalles y comprar**: [URL]'
+
+    ### CATÁLOGO COMPLETO ###
+    {$context}
+
+    ### PREGUNTA DEL CLIENTE ###
+    '{$question}'
+
+    ### RESPUESTA TÉCNICA (PBTechnologies - Solo Listas): ###";
+}
+    
+    /**
+     * Registrar consulta en logs
+     */
     public function logQuery($question, $products_count, $response_length) {
         global $wpdb;
         $wpdb->insert($wpdb->prefix . 'rag_query_logs', [
@@ -187,4 +404,49 @@ $question";
             'created_at' => current_time('mysql')
         ]);
     }
+
+/**
+ * Formatear respuesta - solo limpiar texto, NO convertir links
+ */
+/**
+ * Formatear respuesta - limpiar espacios y formatear
+ */
+private function formatResponse($response) {
+    // 1. 🔥 ELIMINAR SALTOS DE LÍNEA AL INICIO Y FINAL
+    $response = ltrim($response, "\n\r");
+    $response = rtrim($response);
+    
+    // 2. Eliminar espacios en blanco excesivos
+    $response = preg_replace("/\n{3,}/", "\n\n", $response);
+    $response = preg_replace("/[\t]+/", "", $response);
+    
+    // 3. Eliminar líneas vacías al inicio
+    $response = preg_replace('/^\s*\n/', '', $response);
+    
+    // 4. Eliminar HTML corrupto
+    $response = preg_replace('/<a[^>]*>.*?<\/a>/i', '', $response);
+    $response = preg_replace('/" target="blank"[^>]*>/i', '', $response);
+    $response = preg_replace('/rel="noopener noreferrer"[^>]*>/i', '', $response);
+    $response = preg_replace('/class="product-link"[^>]*>/i', '', $response);
+    
+    // 5. Eliminar texto "🔗 URL:" sobrante
+    $response = preg_replace('/🔗\s*URL:\s*/i', '', $response);
+    
+    // 6. 🔥 ELIMINAR LÍNEAS VACÍAS DESPUÉS DEL TÍTULO
+    $response = preg_replace('/(Sí, en PBTechnologies.*?)\n\s*\n/', "$1\n", $response);
+    
+    // 7. Convertir saltos de línea a <br>
+    $response = nl2br($response);
+    
+    // 8. Formatear negritas
+    $response = preg_replace('/\*\*(.+?)\*\*/', '<strong>$1</strong>', $response);
+    
+    // 9. 🔥 ELIMINAR BR AL INICIO
+    $response = preg_replace('/^(<br\s*\/?>\s*)+/', '', $response);
+    
+    // 10. Reducir BR duplicados
+    $response = preg_replace('/(<br\s*\/?>\s*){3,}/', '<br><br>', $response);
+    
+    return $response;
+}
 }

@@ -21,6 +21,9 @@ class Gemini_RAG_Admin_Menu {
         
         // Handler para actualizar VIEW de WooCommerce
         add_action('admin_post_refresh_woo_view', [$this, 'handleRefreshWooView']);
+        
+        // 🔥 NUEVO: Handler para actualizar VIEW de Eventos
+        add_action('admin_post_refresh_events_view', [$this, 'handleRefreshEventsView']);
     }
     
     public function addMenus() {
@@ -50,6 +53,16 @@ class Gemini_RAG_Admin_Menu {
             'manage_options',
             'gemini-rag-products',
             [$this, 'renderProducts']
+        );
+        
+        // 🔥 NUEVO: Submenú para ver eventos
+        add_submenu_page(
+            'gemini-rag',
+            'Ver Eventos',
+            'Ver Eventos',
+            'manage_options',
+            'gemini-rag-events',
+            [$this, 'renderEvents']
         );
         
         add_submenu_page(
@@ -127,30 +140,118 @@ class Gemini_RAG_Admin_Menu {
         }
     }
     
-    public function renderDashboard() {
-        // Procesar mensaje de éxito después de actualizar
-        $woo_refreshed = isset($_GET['woo_refreshed']) && $_GET['woo_refreshed'] == '1';
-        if ($woo_refreshed) {
-            echo '<div class="notice notice-success is-dismissible"><p>✅ VIEW de WooCommerce actualizada correctamente. Los productos y especificaciones están sincronizados.</p></div>';
+    /**
+     * 🔥 NUEVO: Handler para actualizar VIEW de Eventos
+     */
+    public function handleRefreshEventsView() {
+        // Verificar permisos
+        if (!current_user_can('manage_options')) {
+            wp_die('No tienes permisos para realizar esta acción.');
         }
         
-        $company_count = $this->database->getCompanyCount();
+        // Verificar nonce
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'refresh_events_view')) {
+            wp_die('Nonce inválido.');
+        }
         
-        // Obtener contador de productos WooCommerce
-        $woo_product_count = 0;
-        $woo_last_updated = get_option('woo_view_last_updated', 'Nunca');
-        
-        if (class_exists('ChatRAG_WooCommerce')) {
+        // Verificar que la clase existe
+        if (class_exists('ChatRAG_EventsCalendar')) {
             try {
-                $woo = new ChatRAG_WooCommerce();
-                $woo_product_count = $woo->getProductCount();
+                $events = new ChatRAG_EventsCalendar();
+                
+                if (!$events->isEventsCalendarActive()) {
+                    wp_die('Error: The Events Calendar no está activo.');
+                }
+                
+                $events->createEventsView();
+                update_option('events_view_last_updated', current_time('mysql'));
+                
+                // Redirigir con mensaje de éxito
+                wp_redirect(add_query_arg(
+                    'events_refreshed', 
+                    '1', 
+                    admin_url('admin.php?page=gemini-rag')
+                ));
+                exit;
             } catch (Exception $e) {
-                error_log('Error al obtener productos WooCommerce: ' . $e->getMessage());
+                wp_die('Error al actualizar: ' . $e->getMessage());
             }
+        } else {
+            wp_die('Error: No se pudo cargar la clase ChatRAG_EventsCalendar.');
         }
-        
-        include plugin_dir_path(__FILE__) . 'pages/dashboard.php';
     }
+    
+    public function renderDashboard() {
+    // Procesar mensaje de éxito después de actualizar
+    $woo_refreshed = isset($_GET['woo_refreshed']) && $_GET['woo_refreshed'] == '1';
+    $events_refreshed = isset($_GET['events_refreshed']) && $_GET['events_refreshed'] == '1';
+    
+    if ($woo_refreshed) {
+        echo '<div class="notice notice-success is-dismissible"><p>✅ VIEW de WooCommerce actualizada correctamente.</p></div>';
+    }
+    
+    if ($events_refreshed) {
+        echo '<div class="notice notice-success is-dismissible"><p>✅ VIEW de Eventos actualizada correctamente.</p></div>';
+    }
+    
+    $company_count = $this->database->getCompanyCount();
+    
+    // Obtener contador de productos WooCommerce
+    $woo_product_count = 0;
+    $woo_last_updated = get_option('woo_view_last_updated', 'Nunca');
+    
+    if (class_exists('ChatRAG_WooCommerce')) {
+        try {
+            $woo = new ChatRAG_WooCommerce();
+            $woo_product_count = $woo->getProductCount();
+        } catch (Exception $e) {
+            error_log('Error al obtener productos WooCommerce: ' . $e->getMessage());
+        }
+    }
+    
+    // 🔥 Obtener contador de eventos - AHORA CON MÉTODO CORREGIDO
+    $events_count = 0;
+    $events_last_updated = get_option('events_view_last_updated', 'Nunca');
+    $events_summary = ['upcoming' => 0, 'current' => 0, 'past' => 0];
+    
+    error_log("=== [Gemini RAG] DASHBOARD RENDER ===");
+    
+    if (class_exists('ChatRAG_EventsCalendar')) {
+        error_log("ChatRAG_EventsCalendar existe");
+        $events = new ChatRAG_EventsCalendar();
+        
+        // Verificar si The Events Calendar está activo
+        $is_active = $events->isEventsCalendarActive();
+        error_log("The Events Calendar activo: " . ($is_active ? "SI" : "NO"));
+        
+        if ($is_active) {
+            $events_count = $events->getEventCount();
+            error_log("EVENTOS COUNT RESULTADO: " . $events_count);
+        } else {
+            error_log("The Events Calendar NO está activo");
+        }
+    } else {
+        error_log("ChatRAG_EventsCalendar NO existe");
+    }
+    
+    if (class_exists('ChatRAG_EventsCalendar')) {
+        try {
+            $events = new ChatRAG_EventsCalendar();
+            if ($events->isEventsCalendarActive()) {
+                $events_count = $events->getEventCount();
+                $events_summary = $events->getEventsSummary();
+                error_log("📊 Dashboard - Eventos count: " . $events_count);
+            } else {
+                error_log("📊 The Events Calendar no está activo");
+            }
+        } catch (Exception $e) {
+            error_log('Error al obtener eventos: ' . $e->getMessage());
+        }
+    }
+    
+    include plugin_dir_path(__FILE__) . 'pages/dashboard.php';
+
+}
     
     public function renderImportCompany() {
         include plugin_dir_path(__FILE__) . 'pages/import-company-simple.php';
@@ -159,6 +260,13 @@ class Gemini_RAG_Admin_Menu {
     public function renderProducts() {
         // Mostrar productos desde WooCommerce
         include plugin_dir_path(__FILE__) . 'pages/products.php';
+    }
+    
+    /**
+     * 🔥 NUEVO: Renderizar página de eventos
+     */
+    public function renderEvents() {
+        include plugin_dir_path(__FILE__) . 'pages/events.php';
     }
     
     public function renderCompany() {

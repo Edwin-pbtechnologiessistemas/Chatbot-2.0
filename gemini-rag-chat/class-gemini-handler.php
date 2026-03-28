@@ -234,9 +234,9 @@ private $current_key_index = 0;
         ],
         "generationConfig" => [
             "temperature" => 0.1,
-            "maxOutputTokens" => 2048,
+            "maxOutputTokens" => 8182,
             "topP" => 0.95,
-            "topK" => 40 // Bajamos un poco para asegurar estabilidad
+            "topK" => 20 // Bajamos un poco para asegurar estabilidad
         ]
     ];
 
@@ -258,7 +258,7 @@ private $current_key_index = 0;
         $args = [
             'headers' => ['Content-Type' => 'application/json'],
             'body'    => $json_body,
-            'timeout' => 120,
+            'timeout' => 200,
             'method'  => 'POST'
         ];
 
@@ -318,7 +318,7 @@ private $current_key_index = 0;
         }
     }
 
-    return "⚠️ Todas las API keys alcanzaron su límite. Intenta más tarde.";
+    return "⚠️ No disponible La Consulta Con el Asistente. Si quieres Comunicarte A los Siguientes numero: WhatsApp al +591 710 33004 , llamarnos al +591 3 3454600 o visitarnos en nuestra oficina en Av. Cristo Redentor, C. Cosorio 2015, Santa Cruz de la Sierra.";
 }
 
 /**
@@ -365,22 +365,45 @@ private function buildPrompt($question, $context) {
     return "Estás actuando como Ingeniero de Soporte de PBTechnologies (Bolivia).
     
     ### OBJETO DEL SISTEMA ###
-    Tu tarea es escanear el CATÁLOGO DETALLADO y encontrar el equipo cuya 'DESCRIPCIÓN' o 'USO' coincida estrictamente con la necesidad del cliente.
-    
+    Tu tarea es entender la necesidad del cliente y recomendar los equipos más adecuados del catálogo.
+Si hay varias opciones válidas, debes COMPARARLAS de forma clara y ayudar al cliente a elegir según el nivel de uso:.
+
     ### REGLAS DE ANÁLISIS DINÁMICO (ESTRICTAS) ###
     1. **NO INVENTAR:** Si el producto no está en el catálogo, di: 'Actualmente no contamos con ese equipo específico en nuestro catálogo digital'. No menciones marcas externas como Bosch o Makita si no están en el texto.
     2. **ANÁLISIS DE ACCIÓN:** Extrae el 'VERBO' o 'NECESIDAD' (fuga, consumo, temperatura, corte) y busca el equipo que lo resuelva.
     3. **PRIORIDAD:** Si un equipo menciona la palabra clave (ej: 'fuga') en su descripción técnica, elígelo aunque esté al final de la lista.
     4. **PROHIBIDO TABLAS:** No uses tablas bajo ninguna circunstancia (rompen el chat). Usa solo LISTAS CON VIÑETAS.
     5. **CERO PRECIOS:** No menciones montos. Di siempre 'Precio a consultar'.
-    6. invita a consultar por WhatsApp, numero de contacto y direccion de la oficina
+    6. Si es un saludo Responde el saludo de manera cortes.
+    7. invita a consultar solo cuando te pidan numero o direccion, No en todos los mensajes: por WhatsApp, numero de contacto y direccion de la oficina
 
     ### FORMATO DE RESPUESTA REQUERIDO ###
     Si encuentras coincidencia, responde así:
     'Sí, en PBTechnologies contamos con [Producto] ideal para [Aplicación]:
     * **[Nombre Producto]**: [Breve descripción de por qué sirve]
     * **Característica clave**: [Dato técnico]
-    * 🔗 **Ver detalles y comprar**: [URL]'
+    * **[Ideal para]**: [tipo de trabajo o usuario]
+    * 🔗 **Ver detalles**: [URL]'
+
+    Si el cliente menciona compara 2 o más productos específicos, responde así:
+
+Comparación entre los equipos:
+
+* **[Producto 1]**
+  - Ideal para: [tipo de trabajo]
+  - Ventaja principal: [punto fuerte]
+  - Limitación: [en qué se queda corto]
+
+* **[Producto 2]**
+  - Ideal para: [tipo de trabajo]
+  - Ventaja principal: [diferencia clave]
+  - Limitación: [punto débil]
+
+**Diferencia clave:**
+[Explica en lenguaje simple la diferencia más importante]
+
+**¿Cuál elegir?**
+[Recomendación directa según tipo de usuario o necesidad]
 
     ### CATÁLOGO COMPLETO ###
     {$context}
@@ -448,5 +471,54 @@ private function formatResponse($response) {
     $response = preg_replace('/(<br\s*\/?>\s*){3,}/', '<br><br>', $response);
     
     return $response;
+}
+/**
+ * AJAX handler para probar conexión con Gemini API
+ */
+public function test_gemini_connection() {
+    // Verificar nonce
+    if (!check_ajax_referer('test_gemini_connection', 'nonce', false)) {
+        wp_send_json_error('Nonce inválido');
+    }
+    
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('No tienes permisos');
+    }
+    
+    // Obtener API keys configuradas
+    $api_keys = array_filter([
+        get_option('gemini_api_key_1', ''),
+        get_option('gemini_api_key_2', ''),
+        get_option('gemini_api_key_3', ''),
+        get_option('gemini_api_key_4', ''),
+        get_option('gemini_api_key_5', '')
+    ]);
+    
+    if (empty($api_keys)) {
+        wp_send_json_error('No hay API keys configuradas. Ve a Configuración y agrega al menos una API key.');
+    }
+    
+    // Probar la primera key
+    $api_key = reset($api_keys);
+    
+    $url = "https://generativelanguage.googleapis.com/v1beta/models?key=" . $api_key;
+    
+    $response = wp_remote_get($url, ['timeout' => 10]);
+    
+    if (is_wp_error($response)) {
+        wp_send_json_error('Error de conexión: ' . $response->get_error_message());
+    }
+    
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    
+    if (isset($body['error'])) {
+        wp_send_json_error('API Key inválida: ' . ($body['error']['message'] ?? 'Error desconocido'));
+    }
+    
+    if (isset($body['models'])) {
+        wp_send_json_success('Conexión exitosa! API Key válida. Modelos disponibles: ' . count($body['models']));
+    }
+    
+    wp_send_json_error('Respuesta inesperada de la API');
 }
 }

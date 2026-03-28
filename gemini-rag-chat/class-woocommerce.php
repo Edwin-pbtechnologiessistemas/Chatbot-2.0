@@ -117,10 +117,11 @@ class ChatRAG_WooCommerce {
     error_log('🔍 Búsqueda WooCommerce - Consulta limpia: ' . $clean_query);
     
     // Extraer palabras clave
-    $words = explode(' ', $clean_query);
+    $clean_query = $this->normalizeText($query);
+$words = explode(' ', $clean_query);
     
     // Stopwords
-    $stopwords = ['para', 'tiene', 'tienen', 'ustedes', 'busco', 'hola', 'quiero', 'necesito', 
+    $stopwords = ['mejor','para', 'tiene', 'tienen', 'ustedes', 'busco', 'hola', 'quiero', 'necesito', 
                   'como', 'una', 'un', 'el', 'la', 'los', 'las', 'me', 'te', 'se', 'con', 'por', 
                   'que', 'cual', 'donde', 'cuando', 'porque', 'entre', 'contra', 'versus', 'vs',
                   'cual', 'diferencia', 'tienen', 'tiene', 'pueden', 'puede', 'para', 'que',
@@ -149,7 +150,7 @@ class ChatRAG_WooCommerce {
         });
         
         // Mostrar los más relevantes
-        $products = array_slice($products, 0, 10);
+        $products = array_slice($products, 0, 14);
         error_log('✅ Encontrados ' . count($products) . ' productos');
         
         return $this->prepareProducts($products);
@@ -209,72 +210,93 @@ private function calculateRelevance($product, $words) {
 }
 
 private function searchWithRelevance($words) {
-    $fields = ['product_name', 'brand', 'categories', 'short_description', 'long_description', 'specifications'];
-    
-    $conditions = [];
-    $params = [];
-    
-    foreach ($words as $word) {
-        // 🔥 ESCAPAR CORRECTAMENTE para LIKE
-        $escaped_word = $this->wpdb->esc_like($word);
-        
-        $field_conditions = [];
-        foreach ($fields as $field) {
-            $field_conditions[] = "{$field} LIKE %s";
-            $params[] = '%' . $escaped_word . '%';
-        }
-        $conditions[] = '(' . implode(' OR ', $field_conditions) . ')';
-    }
-    
-    $sql = "SELECT * FROM {$this->view_name} 
-            WHERE " . implode(' OR ', $conditions);
-    
-    error_log('🔍 SQL BÚSQUEDA: ' . $sql);
-    error_log('🔍 PALABRAS: ' . implode(', ', $words));
-    
-    $products = $this->wpdb->get_results($this->wpdb->prepare($sql, $params));
-    
-    error_log('🔍 TOTAL PRODUCTOS ENCONTRADOS: ' . count($products));
-    
-    // Si no hay productos con LIKE, intentar búsqueda más flexible
-    if (empty($products)) {
-        error_log('🔍 Intentando búsqueda flexible...');
-        $flexible_conditions = [];
-        $flexible_params = [];
-        
-        foreach ($words as $word) {
-            // Buscar palabras similares (primeros 5 caracteres)
-            $short_word = substr($word, 0, 5);
-            $flexible_conditions[] = "(product_name LIKE %s OR short_description LIKE %s)";
-            $flexible_params[] = '%' . $this->wpdb->esc_like($short_word) . '%';
-            $flexible_params[] = '%' . $this->wpdb->esc_like($short_word) . '%';
-        }
-        
-        $flexible_sql = "SELECT * FROM {$this->view_name} 
-                         WHERE " . implode(' OR ', $flexible_conditions);
-        
-        $products = $this->wpdb->get_results($this->wpdb->prepare($flexible_sql, $flexible_params));
-        error_log('🔍 PRODUCTOS ENCONTRADOS (búsqueda flexible): ' . count($products));
-    }
-    
-    // Calcular relevancia
+
+    // 🔥 1. TRAER MUCHOS PRODUCTOS (NO FILTRAR DURO)
+    $sql = "SELECT * FROM {$this->view_name} LIMIT 200";
+    $products = $this->wpdb->get_results($sql);
+
+    if (empty($products)) return [];
+
+    $results = [];
+
     foreach ($products as $product) {
-        $product->relevance_score = $this->calculateRelevance($product, $words);
-        error_log('📊 ' . $product->product_name . ' - Score: ' . $product->relevance_score);
+
+        // 🔥 2. NORMALIZAR TODO EL TEXTO DEL PRODUCTO
+        $text = $this->normalizeText(
+            $product->product_name . ' ' .
+            $product->brand . ' ' .
+            $product->categories . ' ' .
+            $product->short_description . ' ' .
+            $product->long_description . ' ' .
+            $product->specifications
+        );
+
+        $score = 0;
+        $match_count = 0;
+
+        foreach ($words as $word) {
+
+            $word = $this->normalizeText($word);
+
+            if (strlen($word) < 3) continue;
+
+            // 🔥 MATCH EXACTO
+            if (strpos($text, $word) !== false) {
+                $score += 40;
+                $match_count++;
+                continue;
+            }
+
+            // 🔥 MATCH PARCIAL (prefijo)
+            foreach (explode(' ', $text) as $token) {
+                if (strpos($token, $word) === 0) {
+                    $score += 25;
+                    $match_count++;
+                    break;
+                }
+            }
+
+            // 🔥 MATCH DIFUSO (errores ortográficos)
+            foreach (explode(' ', $text) as $token) {
+                if (strlen($token) < 4) continue;
+
+                $sim = $this->similarity($word, $token);
+
+                if ($sim > 75) {
+                    $score += 20;
+                    $match_count++;
+                    break;
+                }
+            }
+        }
+
+        // 🔥 BONUS POR NOMBRE (MUY IMPORTANTE)
+        $name = $this->normalizeText($product->product_name);
+        foreach ($words as $word) {
+            if (strpos($name, $word) !== false) {
+                $score += 60;
+            }
+        }
+
+        // 🔥 BONUS PROPORCIONAL
+        if (count($words) > 0) {
+            $score += ($match_count / count($words)) * 50;
+        }
+
+        if ($score > 20) {
+            $product->relevance_score = $score;
+            $results[] = $product;
+        }
     }
-    
-    // Filtrar productos con score > 0
-    $products = array_filter($products, function($p) {
-        return $p->relevance_score > 0;
-    });
-    
-    usort($products, function($a, $b) {
+
+    // 🔥 ORDENAR
+    usort($results, function($a, $b) {
         return $b->relevance_score - $a->relevance_score;
     });
-    
-    error_log('✅ PRODUCTOS RELEVANTES: ' . count($products));
-    
-    return $products;
+
+    error_log('✅ PRODUCTOS RELEVANTES (RAG): ' . count($results));
+
+    return array_slice($results, 0, 15);
 }
     
     /**
@@ -422,7 +444,7 @@ public function formatForGemini($products) {
         $output .= "===========================================\n\n";
         
         $index++;
-        if ($index > 15) break;
+        if ($index > 14) break;
     }
     
     return $output;
@@ -478,6 +500,25 @@ private function extractFeaturesFromSpecs($specs) {
         
         return implode("\n", $features);
     }
+    private function normalizeText($text) {
+    $text = mb_strtolower($text, 'UTF-8');
+
+    $text = strtr($text, [
+        'á'=>'a','é'=>'e','í'=>'i','ó'=>'o','ú'=>'u',
+        'Á'=>'a','É'=>'e','Í'=>'i','Ó'=>'o','Ú'=>'u',
+        'ñ'=>'n','Ñ'=>'n'
+    ]);
+
+    // quitar caracteres raros
+    $text = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $text);
+    $text = preg_replace('/\s+/', ' ', $text);
+
+    return trim($text);
+}
+private function similarity($a, $b) {
+    similar_text($a, $b, $percent);
+    return $percent; // 0 - 100
+}
     
     
     public function getProductCount() {

@@ -16,6 +16,7 @@ define('GEMINI_RAG_VERSION', '1.0');
 // Cargar clases necesarias
 require_once GEMINI_RAG_PATH . 'class-database.php';
 require_once GEMINI_RAG_PATH . 'class-gemini-handler.php';
+require_once GEMINI_RAG_PATH . 'class-events-calendar.php';
 
 class Gemini_RAG_Plugin {
     

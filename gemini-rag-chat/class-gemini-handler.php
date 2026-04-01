@@ -64,42 +64,58 @@ private $current_key_index = 0;
     global $wpdb;
     $table_company = $this->db->getTables()['company'];
     
-    // 1. OBTENER INFO DE EMPRESA
+    // 1. INFO DE EMPRESA
     $company_info = $wpdb->get_results(
         "SELECT * FROM $table_company 
-         WHERE info_type IN ('empresa', 'ubicacion', 'contacto') 
-         ORDER BY order_index ASC LIMIT 5"
+         WHERE info_type IN ('empresa', 'ubicacion', 'contacto', 'mision') 
+         ORDER BY order_index ASC LIMIT 10"
     );
-
-    // 2. OBTENER PRODUCTOS (CORREGIDO)
+    
+    // 2. PRODUCTOS
     $products = [];
     $context_products = "";
-
     if ($this->woo && $this->woo->isWooActive()) {
-        // Buscamos 50 productos para tener buen margen de coincidencia
-        $products = $this->woo->searchProducts($question, 50);
+        $products = $this->woo->searchProducts($question, 10);
         $context_products = $this->woo->formatForGemini($products);
-    } else {
-        $products = $this->searchProductsOptimized($question);
-        $context_products = $this->buildContextFromWoo($company_info, $products);
+        error_log("📦 Productos encontrados: " . count($products));
     }
-
-    // 3. CONSTRUIR CONTEXTO CORPORATIVO
+    
+    // 3. EVENTOS 🔥
+    $events = [];
+    $context_events = "";
+    if (class_exists('ChatRAG_EventsCalendar')) {
+        $events_calendar = new ChatRAG_EventsCalendar();
+        if ($events_calendar->isEventsCalendarActive()) {
+            $events = $events_calendar->searchEvents($question, 5);
+            $context_events = $events_calendar->formatForGemini($events);
+            error_log("📅 Eventos encontrados: " . count($events));
+        }
+    }
+    
+    // 4. CONSTRUIR CONTEXTO
     $context_company = "--- INFORMACIÓN EMPRESA ---\n";
     foreach ($company_info as $info) {
-        $context_company .= "{$info->title}: {$info->content} | {$info->subcontent}\n";
+        $context_company .= "{$info->title}: {$info->content}\n";
     }
-
-    // Unimos TODO el contexto (Empresa + Productos)
-    $full_context = $context_company . "\n" . $context_products;
-
-    // 4. LLAMADA A GEMINI
+    
+    $full_context = $context_company;
+    
+    if (!empty($context_products)) {
+        $full_context .= "\n--- CATÁLOGO DE PRODUCTOS ---\n" . $context_products;
+    }
+    
+    if (!empty($context_events)) {
+        $full_context .= "\n--- EVENTOS Y SEMINARIOS ---\n" . $context_events;
+    }
+    
+    // 5. LLAMADA A GEMINI
     $response = $this->callGemini($question, $full_context);
     
     return [
         'response' => $this->formatResponse($response),
-        'context' => $full_context, // Para que el log de debug ahora sí muestre los productos
-        'products_count' => count($products)
+        'context' => $full_context,
+        'products_count' => count($products),
+        'events_count' => count($events)
     ];
 }
     
